@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HVAC Technician Pay Tracker</title>
+    <style>
+        body { font-family: -apple-system, sans-serif; background-color: #f4f4f9; padding: 15px; color: #000; }
+        .container { max-width: 1400px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        h2 { color: #000; border-bottom: 3px solid #0056b3; padding-bottom: 10px; margin-top: 0; }
+        .rates-info { background-color: #eef7ff; padding: 12px; border-left: 5px solid #0056b3; margin-bottom: 20px; font-weight: 600; display: flex; gap: 15px; flex-wrap: wrap; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th { background-color: #004085; color: white; padding: 10px; text-align: left; font-size: 0.7em; }
+        td { padding: 8px; border-bottom: 1px solid #ddd; font-weight: 600; font-size: 0.85em; }
+        input { border: 1px solid #000; padding: 4px; border-radius: 4px; font-weight: bold; }
+        input[type="number"] { width: 50px; }
+        input[type="time"] { width: 85px; }
+        .totals-section { display: flex; background-color: #000; color: #fff; padding: 15px; border-radius: 8px; justify-content: space-around; flex-wrap: wrap; }
+        .total-box { text-align: center; }
+        .total-box span { display: block; font-size: 1.2em; font-weight: bold; }
+        .total-box label { font-size: 0.7em; text-transform: uppercase; opacity: 0.8; }
+        button { background-color: #444; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; margin: 5px 2px; }
+        .btn-add { background-color: #0056b3; }
+        .btn-excel { background-color: #007bff; }
+        .btn-reset { background-color: #d9534f; float: right; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>HVAC Pay Tracker</h2>
+    
+    <div class="rates-info">
+        <div>Week Ending (Friday): <input type="date" id="weekEndingDate" onchange="saveData()"></div>
+        <div>Tkt: $<input type="number" id="ticketRate" value="30" oninput="calculate()"></div>
+        <div>Hrly: $<input type="number" id="hourlyRate" value="24" oninput="calculate()"></div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Day</th><th>Tix</th><th>Tkt In</th><th>Tkt Out</th><th>Tkt Hrs</th><th>Hr In</th><th>Hr Out</th><th>Hr Hrs</th><th>Day Pay</th><th></th>
+            </tr>
+        </thead>
+        <tbody id="trackerBody"></tbody>
+    </table>
+
+    <button class="btn-add" onclick="addShift()">+ Add Shift</button>
+    <button class="btn-excel" onclick="runExcelExport()">Download Official Form</button>
+    <button class="btn-reset" onclick="archiveAndReset()">Clear Week</button>
+
+    <div class="totals-section">
+        <div class="total-box"><span id="totalTickets">0</span><label>Tickets</label></div>
+        <div class="total-box"><span id="totalAllHours">0.00</span><label>Total Hourly Hours</label></div>
+        <div class="total-box"><span id="grandTotal">$0.00</span><label>Weekly Pay</label></div>
+    </div>
+</div>
+
+<script>
+    const days = ["Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+    
+    // UPDATED ROW MAPPING PER YOUR SPECIFICATIONS
+    const dayRowStart = { 
+        "Saturday": 7, 
+        "Sunday": 11, 
+        "Monday": 15, 
+        "Tuesday": 21, 
+        "Wednesday": 27, 
+        "Thursday": 33, 
+        "Friday": 39 
+    };
+
+    const dayOffsets = { "Saturday": -6, "Sunday": -5, "Monday": -4, "Tuesday": -3, "Wednesday": -2, "Thursday": -1, "Friday": 0 };
+    
+    let shiftCounter = 0;
+
+    function formatTimeStandard(militaryTime) {
+        if (!militaryTime) return '';
+        let [h, m] = militaryTime.split(':');
+        let hrs = parseInt(h);
+        let ampm = hrs >= 12 ? 'PM' : 'AM';
+        hrs = hrs % 12 || 12;
+        return `${hrs}:${m} ${ampm}`;
+    }
+
+    function addShiftRow(day, isBase = false, savedData = null) {
+        const tbody = document.getElementById('trackerBody');
+        const tr = document.createElement('tr');
+        const id = shiftCounter++;
+        tr.setAttribute('data-day', day);
+        
+        tr.innerHTML = `
+            <td><strong>${day}</strong></td>
+            <td><input type="number" id="tix-${id}" value="${savedData?.tickets || 0}" oninput="calculate()"></td>
+            <td><input type="time" id="tin-${id}" value="${savedData?.ticketin || ''}" oninput="calculate()"></td>
+            <td><input type="time" id="tout-${id}" value="${savedData?.ticketout || ''}" oninput="calculate()"></td>
+            <td id="thrs-${id}">0.00</td>
+            <td><input type="time" id="hin-${id}" value="${savedData?.punchin || ''}" oninput="calculate()"></td>
+            <td><input type="time" id="hout-${id}" value="${savedData?.punchout || ''}" oninput="calculate()"></td>
+            <td id="hhrs-${id}">0.00</td>
+            <td id="pay-${id}">$0.00</td>
+            <td>${isBase ? '' : `<button onclick="this.parentElement.parentElement.remove(); calculate();">×</button>`}</td>
+        `;
+        tbody.appendChild(tr);
+    }
+
+    function calculate() {
+        const tRate = parseFloat(document.getElementById('ticketRate').value) || 0;
+        const hRate = parseFloat(document.getElementById('hourlyRate').value) || 0;
+        let totalTixCount = 0;
+        let totalHrHours = 0;
+
+        document.querySelectorAll('#trackerBody tr').forEach(tr => {
+            const id = tr.querySelector('input[id^="tix-"]').id.split('-')[1];
+            
+            const tix = parseFloat(document.getElementById(`tix-${id}`).value) || 0;
+            const tin = document.getElementById(`tin-${id}`).value, tout = document.getElementById(`tout-${id}`).value;
+            let thrs = 0;
+            if (tin && tout) {
+                thrs = (new Date(`1970-01-01T${tout}`) - new Date(`1970-01-01T${tin}`)) / 3600000;
+                if (thrs < 0) thrs += 24;
+            }
+            document.getElementById(`thrs-${id}`).innerText = thrs.toFixed(2);
+
+            const hin = document.getElementById(`hin-${id}`).value, hout = document.getElementById(`hout-${id}`).value;
+            let hhrs = 0;
+            if (hin && hout) {
+                hhrs = (new Date(`1970-01-01T${hout}`) - new Date(`1970-01-01T${hin}`)) / 3600000;
+                if (hhrs < 0) hhrs += 24;
+            }
+            document.getElementById(`hhrs-${id}`).innerText = hhrs.toFixed(2);
+
+            totalTixCount += tix;
+            totalHrHours += hhrs;
+            // Daily Pay reflects accumulated ticket dollars + hourly pay
+            document.getElementById(`pay-${id}`).innerText = '$' + ((tix * tRate) + (hhrs * hRate)).toFixed(2);
+        });
+
+        document.getElementById('totalTickets').innerText = totalTixCount;
+        document.getElementById('totalAllHours').innerText = totalHrHours.toFixed(2);
+        document.getElementById('grandTotal').innerText = '$' + ((totalTixCount * tRate) + (totalHrHours * hRate)).toFixed(2);
+        saveData();
+    }
+
+    function init() {
+        const data = JSON.parse(localStorage.getItem('hvacPayTracker') || '{}');
+        document.getElementById('weekEndingDate').value = data.weekEndingDate || '';
+        document.getElementById('trackerBody').innerHTML = '';
+        if (data.shifts && data.shifts.length > 0) {
+            data.shifts.forEach(s => addShiftRow(s.day, true, s));
+        } else {
+            days.forEach(d => addShiftRow(d, true));
+        }
+        calculate();
+    }
+
+    function addShift() {
+        const d = prompt("Enter Day (e.g. Monday):", "Monday");
+        if (d) addShiftRow(d);
+    }
+
+    function saveData() {
+        const shifts = [];
+        document.querySelectorAll('#trackerBody tr').forEach(tr => {
+            const id = tr.querySelector('input[id^="tix-"]').id.split('-')[1];
+            shifts.push({
+                day: tr.getAttribute('data-day'),
+                tickets: document.getElementById(`tix-${id}`).value,
+                ticketin: document.getElementById(`tin-${id}`).value,
+                ticketout: document.getElementById(`tout-${id}`).value,
+                punchin: document.getElementById(`hin-${id}`).value,
+                punchout: document.getElementById(`hout-${id}`).value
+            });
+        });
+        localStorage.setItem('hvacPayTracker', JSON.stringify({
+            weekEndingDate: document.getElementById('weekEndingDate').value,
+            ticketRate: document.getElementById('ticketRate').value,
+            hourlyRate: document.getElementById('hourlyRate').value,
+            shifts: shifts
+        }));
+    }
+
+    async function runExcelExport() {
+        saveData();
+        const data = JSON.parse(localStorage.getItem('hvacPayTracker'));
+        const workbook = new ExcelJS.Workbook();
+        const response = await fetch('./blankpaysheet.xlsx');
+        await workbook.xlsx.load(await response.arrayBuffer());
+        const sheet = workbook.getWorksheet('Maintenance Timesheet');
+
+        const anchorFriday = new Date(data.weekEndingDate + 'T12:00:00');
+        sheet.getCell('A3').value = `PAY PERIOD DATE w/e: ${anchorFriday.toLocaleDateString()}`;
+        sheet.getCell('A4').value = `EMPLOYEE NAME: SANTIAGO RODRIGUEZ`;
+
+        const counters = {};
+
+        data.shifts.forEach(s => {
+            if (!counters[s.day]) counters[s.day] = 0;
+            const d = new Date(anchorFriday);
+            d.setDate(anchorFriday.getDate() + dayOffsets[s.day]);
+
+            const hasTickets = parseInt(s.tickets) > 0;
+            const hasHourly = s.punchin && s.punchout;
+
+            if (hasTickets) {
+                const rowNum = dayRowStart[s.day] + counters[s.day];
+                const row = sheet.getRow(rowNum);
+                row.getCell(2).value = d.toLocaleDateString();
+                row.getCell(4).value = parseInt(s.tickets);
+                row.getCell(4).numFmt = '0';
+                row.getCell(6).value = formatTimeStandard(s.ticketin);
+                row.getCell(7).value = formatTimeStandard(s.ticketout);
+                row.commit();
+                counters[s.day]++;
+            }
+
+            if (hasHourly) {
+                const rowNum = dayRowStart[s.day] + counters[s.day];
+                const row = sheet.getRow(rowNum);
+                row.getCell(2).value = d.toLocaleDateString();
+                row.getCell(3).value = 'X'; 
+                row.getCell(6).value = formatTimeStandard(s.punchin);
+                row.getCell(7).value = formatTimeStandard(s.punchout);
+                row.commit();
+                counters[s.day]++;
+            }
+        });
+
+        const buffer = await workbook.xlsx.writeBuffer();
+        saveAs(new Blob([buffer]), `Official_Report_${data.weekEndingDate}.xlsx`);
+    }
+
+    function archiveAndReset() {
+        if(confirm("Clear week?")) { localStorage.removeItem('hvacPayTracker'); location.reload(); }
+    }
+
+    init();
+</script>
+</body>
+</html>

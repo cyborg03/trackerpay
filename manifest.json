@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="manifest" href="manifest.json">
+    <title>HVAC Technician Pay Tracker</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background-color: #f4f4f9; padding: 20px; color: #000; }
+        .container { max-width: 1250px; margin: 0 auto; background: white; padding: 25px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        h2 { color: #000; border-bottom: 3px solid #0056b3; padding-bottom: 10px; margin-top: 0; }
+        .rates-info { background-color: #eef7ff; padding: 15px; border-left: 5px solid #0056b3; margin-bottom: 20px; color: #000; font-weight: 600; }
+        
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th { background-color: #004085; color: white; padding: 10px 5px; text-align: left; font-size: 0.8em; text-transform: uppercase; }
+        td { padding: 8px 5px; border-bottom: 1px solid #333; color: #000; font-weight: 600; }
+        tr:nth-child(even) { background-color: #f2f2f2; }
+        
+        input { border: 1px solid #000 !important; color: #000; font-weight: bold; padding: 6px; border-radius: 4px; }
+        input[type="number"] { width: 50px; }
+        input[type="time"] { width: 90px; }
+        
+        .daily-total { font-weight: 800; color: #000; }
+        .totals-section { display: flex; justify-content: space-between; background-color: #000; color: #fff; padding: 20px; border-radius: 8px; margin-top: 20px; }
+        .total-box { text-align: center; border-right: 1px solid #444; flex: 1; }
+        .total-box:last-child { border-right: none; }
+        .total-box span { display: block; font-size: 1.4em; font-weight: bold; }
+        .total-box label { font-size: 0.75em; text-transform: uppercase; opacity: 0.9; }
+        
+        button { background-color: #444; color: white; border: none; padding: 10px 18px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-right: 5px; }
+        .btn-add { background-color: #0056b3; }
+        .btn-reset { background-color: #d9534f; float: right; }
+        .btn-print { background-color: #28a745; }
+        .btn-csv { background-color: #6c757d; font-size: 0.8em; padding: 5px 10px; margin-left: 10px; }
+
+        .history-section { margin-top: 30px; border-top: 2px dashed #ccc; padding-top: 20px; }
+        .history-header { display: flex; justify-content: space-between; align-items: center; }
+        .history-item { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #ddd; font-size: 0.9em; }
+
+        @media print {
+            @page { size: landscape; margin: 0.5cm; }
+            button, .btn-reset, .btn-add, .history-section { display: none !important; }
+            body { background-color: white; padding: 0; }
+            .container { box-shadow: none; max-width: 100%; width: 100%; }
+            .totals-section { background-color: #fff !important; color: #000 !important; border: 2px solid #000; }
+            input { border: none !important; background: transparent; }
+            th { background-color: #333 !important; color: #fff !important; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>HVAC Weekly Pay Tracker</h2>
+    
+    <div class="rates-info">
+        Ticket Rate: $<input type="number" id="ticketRate" value="30" step="0.01" oninput="calculate()"> | 
+        Hourly Rate: $<input type="number" id="hourlyRate" value="24" step="0.01" oninput="calculate()">
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Day</th><th>Tix</th><th>Tkt In</th><th>Tkt Out</th><th>Tkt Gross</th>
+                <th>Hrly In</th><th>Hrly Out</th><th>Hrly Gross</th><th>Day Net Hrs</th><th>Day Pay</th>
+                <th>Acc Tkt</th><th>Acc Hrly</th><th></th>
+            </tr>
+        </thead>
+        <tbody id="trackerBody"></tbody>
+    </table>
+
+    <button class="btn-add" onclick="addShift()">+ Add Shift</button>
+    <button class="btn-print" onclick="window.print()">Print / Save PDF</button>
+    <button class="btn-reset" onclick="archiveAndReset()">Finish & Reset Week</button>
+
+    <div class="totals-section">
+        <div class="total-box"><span id="totalTickets">0</span><label>Tickets</label></div>
+        <div class="total-box"><span id="totalTicketPay">$0.00</span><label>Ticket Pay</label></div>
+        <div class="total-box"><span id="totalAllHours">0.00</span><label>Total Hours</label></div>
+        <div class="total-box"><span id="totalHourlyPay">$0.00</span><label>Hourly Pay</label></div>
+        <div class="total-box"><span id="grandTotal">$0.00</span><label>Weekly Pay</label></div>
+    </div>
+
+    <div class="history-section" id="historySection">
+        <div class="history-header">
+            <h3>Recent History</h3>
+            <button class="btn-csv" onclick="exportToCSV()">Download CSV</button>
+        </div>
+        <div id="historyList"></div>
+    </div>
+</div>
+
+<script>
+    const dayOrder = { "Monday": 1, "Tuesday": 2, "Wednesday": 3, "Thursday": 4, "Friday": 5, "Saturday": 6, "Sunday": 7 };
+    let shiftCounter = 0;
+
+    function init() {
+        const tbody = document.getElementById('trackerBody');
+        tbody.innerHTML = '';
+        shiftCounter = 0;
+        
+        const data = JSON.parse(localStorage.getItem('hvacPayTracker') || '{}');
+        document.getElementById('ticketRate').value = data.ticketRate || 30;
+        document.getElementById('hourlyRate').value = data.hourlyRate || 24;
+
+        if (data.shifts && data.shifts.length > 0) {
+            data.shifts.sort((a, b) => dayOrder[a.day] - dayOrder[b.day]);
+            data.shifts.forEach(s => addShiftRow(s.day, s.isBase, s));
+        } else {
+            ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(day => addShiftRow(day, true));
+        }
+        loadHistory();
+        calculate();
+    }
+
+    function addShiftRow(day = '', isBase = false, savedData = null) {
+        const tbody = document.getElementById('trackerBody');
+        const tr = document.createElement('tr');
+        const rowId = shiftCounter++;
+        tr.setAttribute('data-day', day);
+
+        tr.innerHTML = `
+            <td><strong>${day}</strong><input type="hidden" id="dayname-${rowId}" value="${day}"></td>
+            <td><input type="number" min="0" value="${savedData ? savedData.tickets : 0}" oninput="calculate()" id="tickets-${rowId}"></td>
+            <td><input type="time" value="${savedData ? savedData.ticketin : ''}" oninput="calculateRow(${rowId})" id="ticketin-${rowId}"></td>
+            <td><input type="time" value="${savedData ? savedData.ticketout : ''}" oninput="calculateRow(${rowId})" id="ticketout-${rowId}"></td>
+            <td><input type="number" step="0.01" value="${savedData ? savedData.tickethours : 0}" readonly id="tickethours-${rowId}"></td>
+            <td><input type="time" value="${savedData ? savedData.punchin : ''}" oninput="calculateRow(${rowId})" id="punchin-${rowId}"></td>
+            <td><input type="time" value="${savedData ? savedData.punchout : ''}" oninput="calculateRow(${rowId})" id="punchout-${rowId}"></td>
+            <td><input type="number" step="0.01" value="${savedData ? savedData.hours : 0}" readonly id="hours-${rowId}"></td>
+            <td class="daily-total" id="dailyhours-${rowId}">0.00</td>
+            <td class="daily-total" id="daily-${rowId}">$0.00</td>
+            <td class="daily-total" id="accumticket-${rowId}">$0.00</td>
+            <td class="daily-total" id="accumhourly-${rowId}">$0.00</td>
+            <td>${isBase ? '' : `<button onclick="removeShift(this)">×</button>`}</td>
+        `;
+        tbody.appendChild(tr);
+    }
+
+    function calculateRow(id) {
+        const tIn = document.getElementById(`ticketin-${id}`).value;
+        const tOut = document.getElementById(`ticketout-${id}`).value;
+        const hIn = document.getElementById(`punchin-${id}`).value;
+        const hOut = document.getElementById(`punchout-${id}`).value;
+
+        if (tIn && tOut) {
+            let diff = (new Date(`1970-01-01T${tOut}`) - new Date(`1970-01-01T${tIn}`)) / 3600000;
+            document.getElementById(`tickethours-${id}`).value = (diff < 0 ? diff + 24 : diff).toFixed(2);
+        }
+        if (hIn && hOut) {
+            let diff = (new Date(`1970-01-01T${hOut}`) - new Date(`1970-01-01T${hIn}`)) / 3600000;
+            document.getElementById(`hours-${id}`).value = (diff < 0 ? diff + 24 : diff).toFixed(2);
+        }
+        calculate();
+    }
+
+    function calculate() {
+        const tRate = parseFloat(document.getElementById('ticketRate').value) || 0;
+        const hRate = parseFloat(document.getElementById('hourlyRate').value) || 0;
+        
+        const dayGroups = {};
+        document.querySelectorAll('#trackerBody tr').forEach(tr => {
+            const dayName = tr.getAttribute('data-day');
+            if (!dayGroups[dayName]) dayGroups[dayName] = [];
+            dayGroups[dayName].push(tr);
+        });
+
+        let totalWeeklyTickets = 0;
+        let totalWeeklyTicketHrs = 0;
+        let totalWeeklyHourlyHrs = 0;
+        let runningAccTkt = 0;
+        let runningAccHrly = 0;
+
+        Object.keys(dayOrder).forEach(dayName => {
+            if (!dayGroups[dayName]) return;
+
+            let dayTotalTktHrs = 0;
+            let dayTotalHrlyHrs = 0;
+            let dayTotalTickets = 0;
+
+            dayGroups[dayName].forEach(tr => {
+                const id = tr.querySelector('input[id^="tickets-"]').id.split('-')[1];
+                dayTotalTktHrs += parseFloat(document.getElementById(`tickethours-${id}`).value) || 0;
+                dayTotalHrlyHrs += parseFloat(document.getElementById(`hours-${id}`).value) || 0;
+                dayTotalTickets += parseFloat(document.getElementById(`tickets-${id}`).value) || 0;
+            });
+
+            if (dayTotalTktHrs + dayTotalHrlyHrs > 0) {
+                if (dayTotalHrlyHrs >= dayTotalTktHrs) {
+                    dayTotalHrlyHrs = Math.max(0, dayTotalHrlyHrs - 0.5);
+                } else {
+                    dayTotalTktHrs = Math.max(0, dayTotalTktHrs - 0.5);
+                }
+            }
+
+            const rowsInDay = dayGroups[dayName].length;
+            dayGroups[dayName].forEach((tr, index) => {
+                const id = tr.querySelector('input[id^="tickets-"]').id.split('-')[1];
+                const isLastRow = index === rowsInDay - 1;
+                
+                if (isLastRow) {
+                    runningAccTkt += (dayTotalTickets * tRate);
+                    runningAccHrly += (dayTotalHrlyHrs * hRate);
+                    
+                    document.getElementById(`dailyhours-${id}`).innerText = (dayTotalTktHrs + dayTotalHrlyHrs).toFixed(2);
+                    document.getElementById(`daily-${id}`).innerText = '$' + ((dayTotalTickets * tRate) + (dayTotalHrlyHrs * hRate)).toFixed(2);
+                    document.getElementById(`accumticket-${id}`).innerText = '$' + runningAccTkt.toFixed(2);
+                    document.getElementById(`accumhourly-${id}`).innerText = '$' + runningAccHrly.toFixed(2);
+                } else {
+                    document.getElementById(`dailyhours-${id}`).innerText = "-";
+                    document.getElementById(`daily-${id}`).innerText = "-";
+                    document.getElementById(`accumticket-${id}`).innerText = "-";
+                    document.getElementById(`accumhourly-${id}`).innerText = "-";
+                }
+            });
+
+            totalWeeklyTickets += dayTotalTickets;
+            totalWeeklyTicketHrs += dayTotalTktHrs;
+            totalWeeklyHourlyHrs += dayTotalHrlyHrs;
+        });
+
+        const totalAll = totalWeeklyTicketHrs + totalWeeklyHourlyHrs;
+        const otPay = Math.max(0, totalAll - 40) * hRate * 0.5;
+        const finalHourlyPay = (totalWeeklyHourlyHrs * hRate) + otPay;
+        const finalTicketPay = totalWeeklyTickets * tRate;
+
+        document.getElementById('totalTickets').innerText = totalWeeklyTickets;
+        document.getElementById('totalTicketPay').innerText = '$' + finalTicketPay.toFixed(2);
+        document.getElementById('totalAllHours').innerText = totalAll.toFixed(2);
+        document.getElementById('totalHourlyPay').innerText = '$' + finalHourlyPay.toFixed(2);
+        document.getElementById('grandTotal').innerText = '$' + (finalTicketPay + finalHourlyPay).toFixed(2);
+
+        saveData();
+    }
+
+    function addShift() {
+        const day = prompt("Enter Day (e.g., Saturday):");
+        if (day) {
+            const clean = day.charAt(0).toUpperCase() + day.slice(1).toLowerCase();
+            if (dayOrder[clean]) { addShiftRow(clean, false); sortTable(); calculate(); }
+        }
+    }
+
+    function sortTable() {
+        const tbody = document.getElementById('trackerBody');
+        Array.from(tbody.querySelectorAll('tr'))
+            .sort((a, b) => dayOrder[a.getAttribute('data-day')] - dayOrder[b.getAttribute('data-day')])
+            .forEach(row => tbody.appendChild(row));
+    }
+
+    function removeShift(btn) { btn.closest('tr').remove(); calculate(); }
+
+    function saveData() {
+        const shifts = [];
+        document.querySelectorAll('#trackerBody tr').forEach(tr => {
+            const id = tr.querySelector('input[id^="tickets-"]').id.split('-')[1];
+            shifts.push({
+                day: document.getElementById(`dayname-${id}`).value,
+                tickets: document.getElementById(`tickets-${id}`).value,
+                ticketin: document.getElementById(`ticketin-${id}`).value,
+                ticketout: document.getElementById(`ticketout-${id}`).value,
+                tickethours: document.getElementById(`tickethours-${id}`).value,
+                punchin: document.getElementById(`punchin-${id}`).value,
+                punchout: document.getElementById(`punchout-${id}`).value,
+                hours: document.getElementById(`hours-${id}`).value,
+                isBase: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].includes(document.getElementById(`dayname-${id}`).value)
+            });
+        });
+        localStorage.setItem('hvacPayTracker', JSON.stringify({
+            ticketRate: document.getElementById('ticketRate').value,
+            hourlyRate: document.getElementById('hourlyRate').value,
+            shifts
+        }));
+    }
+
+    function archiveAndReset() {
+        if (!confirm("Save to history and clear current week?")) return;
+        const history = JSON.parse(localStorage.getItem('hvacHistory') || '[]');
+        const entry = {
+            date: new Date().toLocaleDateString(),
+            pay: document.getElementById('grandTotal').innerText,
+            hours: document.getElementById('totalAllHours').innerText,
+            tickets: document.getElementById('totalTickets').innerText
+        };
+        history.unshift(entry);
+        localStorage.setItem('hvacHistory', JSON.stringify(history.slice(0, 10)));
+        localStorage.removeItem('hvacPayTracker');
+        location.reload();
+    }
+
+    function loadHistory() {
+        const list = document.getElementById('historyList');
+        const history = JSON.parse(localStorage.getItem('hvacHistory') || '[]');
+        list.innerHTML = history.map(h => `
+            <div class="history-item">
+                <span><strong>Week Ending ${h.date}</strong></span>
+                <span>${h.tickets} tix | ${h.hours} hrs | ${h.pay}</span>
+            </div>
+        `).join('');
+    }
+
+    function exportToCSV() {
+        const history = JSON.parse(localStorage.getItem('hvacHistory') || '[]');
+        if (history.length === 0) { alert("No history to export."); return; }
+        
+        let csvContent = "data:text/csv;charset=utf-8,Date,Tickets,Total Hours,Pay\n";
+        history.forEach(h => {
+            csvContent += `${h.date},${h.tickets},${h.hours},"${h.pay}"\n`;
+        });
+
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", "hvac_pay_history.csv");
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+    init();
+</script>
+</body>
+</html>

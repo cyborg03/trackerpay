@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="manifest" href="manifest.json">
+    <title>HVAC Technician Pay Tracker</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background-color: #f4f4f9; padding: 15px; color: #000; }
+        .container { max-width: 1400px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        h2 { color: #000; border-bottom: 3px solid #0056b3; padding-bottom: 10px; margin-top: 0; font-size: 1.5em; }
+        .rates-info { background-color: #eef7ff; padding: 12px; border-left: 5px solid #0056b3; margin-bottom: 20px; color: #000; font-weight: 600; font-size: 0.9em; display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
+        
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th { background-color: #004085; color: white; padding: 10px 5px; text-align: left; font-size: 0.7em; text-transform: uppercase; }
+        td { padding: 8px 5px; border-bottom: 1px solid #333; color: #000; font-weight: 600; font-size: 0.85em; }
+        tr:nth-child(even) { background-color: #f2f2f2; }
+        
+        input { border: 1px solid #000 !important; color: #000; font-weight: bold; padding: 5px; border-radius: 4px; }
+        input[type="number"] { width: 45px; }
+        input[type="time"] { width: 85px; }
+        input[type="date"] { padding: 4px; border: 1px solid #333; }
+        
+        .daily-total { font-weight: 800; color: #000; }
+        
+        .totals-section { 
+            display: flex; background-color: #000; color: #fff; padding: 15px; border-radius: 8px; margin-top: 20px; flex-wrap: wrap; gap: 10px; justify-content: space-around;
+        }
+        .total-box { text-align: center; flex: 1 1 140px; padding: 5px; }
+        .total-box span { display: block; font-size: 1.2em; font-weight: bold; }
+        .total-box label { font-size: 0.65em; text-transform: uppercase; opacity: 0.8; letter-spacing: 0.5px; }
+        
+        button { background-color: #444; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 5px; }
+        .btn-add { background-color: #0056b3; }
+        .btn-reset { background-color: #d9534f; float: right; }
+        .btn-print { background-color: #28a745; }
+        .btn-excel { background-color: #007bff; }
+
+        @media print {
+            button, .btn-reset, .btn-add, .btn-excel { display: none !important; }
+            input { border: none !important; background: transparent; padding: 0; margin: 0; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>HVAC Pay Tracker</h2>
+    
+    <div class="rates-info">
+        <div style="margin-right: 20px;">
+            Week Ending: <input type="date" id="weekEndingDate" onchange="saveData()">
+        </div>
+        <div>
+            Tkt: $<input type="number" id="ticketRate" value="30" oninput="calculate()"> | 
+            Hrly: $<input type="number" id="hourlyRate" value="24" oninput="calculate()">
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Day</th><th>Tix</th><th>Tkt In</th><th>Tkt Out</th><th>Tkt Hrs</th>
+                <th>Hr In</th><th>Hr Out</th><th>Hr Hrs</th><th>Day Net</th><th>Day Pay</th>
+                <th>Acc Tkt</th><th>Acc Hrly</th><th></th>
+            </tr>
+        </thead>
+        <tbody id="trackerBody"></tbody>
+    </table>
+
+    <button class="btn-add" onclick="addShift()">+ Add Shift</button>
+    <button class="btn-print" onclick="window.print()">Print PDF</button>
+    <button class="btn-excel" onclick="runExcelExport()">Download Timesheet</button>
+    <button class="btn-reset" onclick="archiveAndReset()">Clear Week</button>
+
+    <div class="totals-section">
+        <div class="total-box"><span id="totalTickets">0</span><label>Tickets</label></div>
+        <div class="total-box"><span id="totalTicketPay">$0.00</span><label>Ticket Pay</label></div>
+        <div class="total-box"><span id="totalAllHours">0.00</span><label>Total Hours</label></div>
+        <div class="total-box"><span id="totalHourlyPay">$0.00</span><label>Hourly Pay</label></div>
+        <div class="total-box"><span id="grandTotal">$0.00</span><label>Weekly Pay</label></div>
+    </div>
+</div>
+
+<script>
+    const dayOrder = { "Monday": 1, "Tuesday": 2, "Wednesday": 3, "Thursday": 4, "Friday": 5, "Saturday": 6, "Sunday": 7 };
+    let shiftCounter = 0;
+
+    // Fixed Standard Time Converter
+    function formatTimeStandard(militaryTime) {
+        if (!militaryTime || militaryTime === "") return '';
+        try {
+            let [hours, minutes] = militaryTime.split(':');
+            hours = parseInt(hours);
+            const ampm = hours >= 12 ? 'PM' : 'AM';
+            hours = hours % 12 || 12;
+            return `${hours}:${minutes} ${ampm}`;
+        } catch (e) { return militaryTime; }
+    }
+
+    function init() {
+        const tbody = document.getElementById('trackerBody');
+        tbody.innerHTML = '';
+        shiftCounter = 0;
+        const data = JSON.parse(localStorage.getItem('hvacPayTracker') || '{}');
+        document.getElementById('ticketRate').value = data.ticketRate || 30;
+        document.getElementById('hourlyRate').value = data.hourlyRate || 24;
+        document.getElementById('weekEndingDate').value = data.weekEndingDate || '';
+
+        if (data.shifts && data.shifts.length > 0) {
+            data.shifts.sort((a, b) => dayOrder[a.day] - dayOrder[b.day]);
+            data.shifts.forEach(s => addShiftRow(s.day, s.isBase, s));
+        } else {
+            ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(day => addShiftRow(day, true));
+        }
+        calculate();
+    }
+
+    function addShiftRow(day = '', isBase = false, savedData = null) {
+        const tbody = document.getElementById('trackerBody');
+        const tr = document.createElement('tr');
+        const rowId = shiftCounter++;
+        tr.setAttribute('data-day', day);
+        tr.innerHTML = `
+            <td><strong>${day}</strong><input type="hidden" id="dayname-${rowId}" value="${day}"></td>
+            <td><input type="number" value="${savedData ? savedData.tickets : 0}" oninput="calculate()" id="tickets-${rowId}"></td>
+            <td><input type="time" value="${savedData ? savedData.ticketin : ''}" oninput="calculateRow(${rowId})" id="ticketin-${rowId}"></td>
+            <td><input type="time" value="${savedData ? savedData.ticketout : ''}" oninput="calculateRow(${rowId})" id="ticketout-${rowId}"></td>
+            <td><input type="number" step="0.01" value="${savedData ? savedData.tickethours : 0}" readonly id="tickethours-${rowId}"></td>
+            <td><input type="time" value="${savedData ? savedData.punchin : ''}" oninput="calculateRow(${rowId})" id="punchin-${rowId}"></td>
+            <td><input type="time" value="${savedData ? savedData.punchout : ''}" oninput="calculateRow(${rowId})" id="punchout-${rowId}"></td>
+            <td><input type="number" step="0.01" value="${savedData ? savedData.hours : 0}" readonly id="hours-${rowId}"></td>
+            <td class="daily-total" id="dailyhours-${rowId}">0.00</td>
+            <td class="daily-total" id="daily-${rowId}">$0.00</td>
+            <td class="daily-total" id="accumticket-${rowId}">$0.00</td>
+            <td class="daily-total" id="accumhourly-${rowId}">$0.00</td>
+            <td>${isBase ? '' : `<button onclick="removeShift(this)">×</button>`}</td>
+        `;
+        tbody.appendChild(tr);
+    }
+
+    function calculateRow(id) {
+        const tIn = document.getElementById(`ticketin-${id}`).value;
+        const tOut = document.getElementById(`ticketout-${id}`).value;
+        const hIn = document.getElementById(`punchin-${id}`).value;
+        const hOut = document.getElementById(`punchout-${id}`).value;
+        if (tIn && tOut) {
+            let diff = (new Date(`1970-01-01T${tOut}`) - new Date(`1970-01-01T${tIn}`)) / 3600000;
+            document.getElementById(`tickethours-${id}`).value = (diff < 0 ? diff + 24 : diff).toFixed(2);
+        }
+        if (hIn && hOut) {
+            let diff = (new Date(`1970-01-01T${hOut}`) - new Date(`1970-01-01T${hIn}`)) / 3600000;
+            document.getElementById(`hours-${id}`).value = (diff < 0 ? diff + 24 : diff).toFixed(2);
+        }
+        calculate();
+    }
+
+    function calculate() {
+        const tRate = parseFloat(document.getElementById('ticketRate').value) || 0;
+        const hRate = parseFloat(document.getElementById('hourlyRate').value) || 0;
+        const dayGroups = {};
+        document.querySelectorAll('#trackerBody tr').forEach(tr => {
+            const d = tr.getAttribute('data-day');
+            if (!dayGroups[d]) dayGroups[d] = [];
+            dayGroups[d].push(tr);
+        });
+
+        let weeklyTix = 0, weeklyTktHrs = 0, weeklyHrlyHrs = 0, accT = 0, accH = 0;
+        Object.keys(dayOrder).forEach(dayName => {
+            if (!dayGroups[dayName]) return;
+            let dTktH = 0, dHrH = 0, dTktC = 0;
+            dayGroups[dayName].forEach(tr => {
+                const id = tr.querySelector('input[id^="tickets-"]').id.split('-')[1];
+                dTktH += parseFloat(document.getElementById(`tickethours-${id}`).value) || 0;
+                dHrH += parseFloat(document.getElementById(`hours-${id}`).value) || 0;
+                dTktC += parseFloat(document.getElementById(`tickets-${id}`).value) || 0;
+            });
+            if (dTktH + dHrH > 0) {
+                if (dHrH >= dTktH) dHrH = Math.max(0, dHrH - 0.5);
+                else dTktH = Math.max(0, dTktH - 0.5);
+            }
+            dayGroups[dayName].forEach((tr, idx) => {
+                const id = tr.querySelector('input[id^="tickets-"]').id.split('-')[1];
+                const isLast = idx === dayGroups[dayName].length - 1;
+                if (isLast) {
+                    accT += (dTktC * tRate); accH += (dHrH * hRate);
+                    document.getElementById(`dailyhours-${id}`).innerText = (dTktH + dHrH).toFixed(2);
+                    document.getElementById(`daily-${id}`).innerText = '$' + ((dTktC * tRate) + (dHrH * hRate)).toFixed(2);
+                } else {
+                    document.getElementById(`dailyhours-${id}`).innerText = "-";
+                    document.getElementById(`daily-${id}`).innerText = "-";
+                }
+                document.getElementById(`accumticket-${id}`).innerText = '$' + accT.toFixed(2);
+                document.getElementById(`accumhourly-${id}`).innerText = '$' + accH.toFixed(2);
+            });
+            weeklyTix += dTktC; weeklyTktHrs += dTktH; weeklyHrlyHrs += dHrH;
+        });
+        document.getElementById('totalTickets').innerText = weeklyTix;
+        document.getElementById('totalTicketPay').innerText = '$' + (weeklyTix * tRate).toFixed(2);
+        document.getElementById('totalAllHours').innerText = (weeklyTktHrs + weeklyHrlyHrs).toFixed(2);
+        document.getElementById('totalHourlyPay').innerText = '$' + (weeklyHrlyHrs * hRate + Math.max(0, (weeklyTktHrs + weeklyHrlyHrs) - 40) * hRate * 0.5).toFixed(2);
+        document.getElementById('grandTotal').innerText = '$' + ((weeklyTix * tRate) + (weeklyHrlyHrs * hRate + Math.max(0, (weeklyTktHrs + weeklyHrlyHrs) - 40) * hRate * 0.5)).toFixed(2);
+        saveData();
+    }
+
+    function addShift() {
+        const d = prompt("Enter Day (e.g. Saturday):");
+        if (d) {
+            const clean = d.charAt(0).toUpperCase() + d.slice(1).toLowerCase();
+            if (dayOrder[clean]) { addShiftRow(clean, false); sortTable(); calculate(); }
+        }
+    }
+
+    function sortTable() {
+        const tbody = document.getElementById('trackerBody');
+        Array.from(tbody.querySelectorAll('tr')).sort((a, b) => dayOrder[a.getAttribute('data-day')] - dayOrder[b.getAttribute('data-day')]).forEach(r => tbody.appendChild(r));
+    }
+
+    function removeShift(btn) { btn.closest('tr').remove(); calculate(); }
+
+    function saveData() {
+        const shifts = [];
+        document.querySelectorAll('#trackerBody tr').forEach(tr => {
+            const id = tr.querySelector('input[id^="tickets-"]').id.split('-')[1];
+            shifts.push({
+                day: document.getElementById(`dayname-${id}`).value,
+                tickets: document.getElementById(`tickets-${id}`).value,
+                ticketin: document.getElementById(`ticketin-${id}`).value,
+                ticketout: document.getElementById(`ticketout-${id}`).value,
+                punchin: document.getElementById(`punchin-${id}`).value,
+                punchout: document.getElementById(`punchout-${id}`).value
+            });
+        });
+        localStorage.setItem('hvacPayTracker', JSON.stringify({
+            ticketRate: document.getElementById('ticketRate').value,
+            hourlyRate: document.getElementById('hourlyRate').value,
+            weekEndingDate: document.getElementById('weekEndingDate').value,
+            shifts
+        }));
+    }
+
+    function archiveAndReset() { if (confirm("Clear current week?")) { localStorage.removeItem('hvacPayTracker'); location.reload(); } }
+
+    async function runExcelExport() {
+        saveData();
+        const data = JSON.parse(localStorage.getItem('hvacPayTracker') || '{}');
+        if (!data.shifts || data.shifts.length === 0) return alert("No shifts to export!");
+
+        const workbook = new ExcelJS.Workbook();
+        try {
+            const response = await fetch('./blankpaysheet.xlsx?v=' + Date.now());
+            if (!response.ok) throw new Error("Could not find blankpaysheet.xlsx.");
+            
+            await workbook.xlsx.load(await response.arrayBuffer());
+            const sheet = workbook.getWorksheet('Maintenance Timesheet');
+
+            sheet.getCell('A4').value = `EMPLOYEE NAME: SANTIAGO RODRIGUEZ`;
+            sheet.getCell('A3').value = `PAY PERIOD DATE w/e: ${data.weekEndingDate || ''}`;
+
+            const dayRowMap = { 'Saturday': 7, 'Sunday': 11, 'Monday': 15, 'Tuesday': 19, 'Wednesday': 23, 'Thursday': 27, 'Friday': 31 };
+            const dayCounters = {};
+
+            data.shifts.forEach(s => {
+                const startRow = dayRowMap[s.day];
+                if (!dayCounters[s.day]) dayCounters[s.day] = 0;
+                const currentRow = startRow + dayCounters[s.day];
+
+                sheet.getCell(`B${currentRow}`).value = data.weekEndingDate || ''; 
+                sheet.getCell(`D${currentRow}`).value = s.tickets || '';
+                
+                // Prioritize standard punch, fallback to ticket
+                const timeIn = s.punchin || s.ticketin || '';
+                const timeOut = s.punchout || s.ticketout || '';
+                
+                sheet.getCell(`F${currentRow}`).value = formatTimeStandard(timeIn);
+                sheet.getCell(`G${currentRow}`).value = formatTimeStandard(timeOut);
+                sheet.getCell(`K${currentRow}`).value = 'X'; // Lock all entries to Maintenance Column K
+                dayCounters[s.day]++;
+            });
+
+            saveAs(new Blob([await workbook.xlsx.writeBuffer()]), `Maintenance_Report_${data.weekEndingDate}.xlsx`);
+        } catch (err) { alert(err.message); console.error(err); }
+    }
+
+    init();
+</script>
+</body>
+</html>
